@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WARLOCK-SOLVER — Real-Time WebGPU/WebGL Fluid Dynamics</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      user-select: none;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .hud-panel {
+      position: absolute;
+      background: rgba(15, 17, 23, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 16px 20px;
+      z-index: 10;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      pointer-events: auto;
+    }
+    #header-hud {
+      top: 20px;
+      left: 20px;
+      max-width: 380px;
+    }
+    #header-hud h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: #f97316;
+    }
+    #header-hud p {
+      font-size: 0.8rem;
+      line-height: 1.45;
+      color: #94a3b8;
+      margin-top: 6px;
+    }
+    #controls-hud {
+      top: 20px;
+      right: 20px;
+      width: 300px;
+    }
+    .control-group {
+      margin-bottom: 12px;
+    }
+    .control-group label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #cbd5e1;
+      margin-bottom: 5px;
+    }
+    .control-group input[type="range"] {
+      width: 100%;
+      accent-color: #f97316;
+    }
+    .theme-selector {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .theme-btn {
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #cbd5e1;
+      padding: 6px;
+      font-size: 0.72rem;
+      border-radius: 4px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .theme-btn.active {
+      border-color: #f97316;
+      background: #c2410c;
+      color: #fff;
+    }
+    .btn-action {
+      width: 100%;
+      padding: 8px;
+      background: #334155;
+      color: #e2e8f0;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+    .btn-action:hover {
+      background: #475569;
+    }
+    #metrics-hud {
+      bottom: 20px;
+      left: 20px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+    .hint-text {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.82rem;
+      color: rgba(255, 255, 255, 0.4);
+      letter-spacing: 0.05em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="fluid-canvas"></canvas>
+
+  <div id="header-hud" class="hud-panel">
+    <h1>WARLOCK-SOLVER</h1>
+    <p>Real-time Eulerian incompressible Navier-Stokes pyro dynamics. Semi-Lagrangian advection, divergence calculation, and iterative Poisson pressure relaxation running directly on GPU shaders.</p>
+  </div>
+
+  <div id="controls-hud" class="hud-panel">
+    <div class="control-group">
+      <label>Poisson Sweeps <span id="iter-val">32</span></label>
+      <input type="range" id="iter-slider" min="10" max="64" step="2" value="32">
+    </div>
+
+    <div class="control-group">
+      <label>Dissipation Rate <span id="dissip-val">0.985</span></label>
+      <input type="range" id="dissip-slider" min="0.920" max="0.999" step="0.002" value="0.985">
+    </div>
+
+    <div class="control-group">
+      <label>Color Spectrum</label>
+      <div class="theme-selector">
+        <button class="theme-btn active" data-theme="solar">Inferno</button>
+        <button class="theme-btn" data-theme="cyber">Cyber</button>
+        <button class="theme-btn" data-theme="toxic">Emerald</button>
+      </div>
+    </div>
+
+    <button id="btn-burst" class="btn-action">Trigger Impulse Burst</button>
+  </div>
+
+  <div class="hint-text">CLICK AND DRAG MOUSE TO INJECT VORTICES</div>
+
+  <div id="metrics-hud" class="hud-panel">
+    <span id="fps-counter">60 FPS</span> | Grid: 256x256 Cells | Dispatch: Eulerian GPU Pipeline
+  </div>
+
+  <script type="module">
+    import { WarlockFluid } from './warlock-solver.js';
+
+    const canvas = document.getElementById('fluid-canvas');
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const fluid = new WarlockFluid(canvas, {
+      width: 256,
+      height: 256,
+      iterations: 32,
+      dissipation: 0.985
+    });
+
+    // Theme paletting
+    let currentTheme = 'solar';
+    function getThemeColor() {
+      if (currentTheme === 'solar') {
+        return [1.0 + Math.random() * 0.5, 0.45 + Math.random() * 0.3, 0.05];
+      } else if (currentTheme === 'cyber') {
+        return Math.random() > 0.5 ? [0.1, 0.8, 1.2] : [1.2, 0.1, 0.8];
+      } else {
+        return [0.05, 1.2 + Math.random() * 0.3, 0.6];
+      }
+    }
+
+    // Interactive Mouse Splatting
+    let isMouseDown = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    window.addEventListener('mousedown', (e) => {
+      isMouseDown = true;
+      lastX = e.clientX / window.innerWidth;
+      lastY = 1.0 - (e.clientY / window.innerHeight);
+    });
+
+    window.addEventListener('mouseup', () => isMouseDown = false);
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isMouseDown) return;
+      const x = e.clientX / window.innerWidth;
+      const y = 1.0 - (e.clientY / window.innerHeight);
+      const dx = (x - lastX) * 40.0;
+      const dy = (y - lastY) * 40.0;
+      lastX = x;
+      lastY = y;
+
+      const col = getThemeColor();
+      fluid.splat(x, y, dx, dy, col);
+    });
+
+    // Mobile Touch Support
+    window.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 0) return;
+      const t = e.touches[0];
+      const x = t.clientX / window.innerWidth;
+      const y = 1.0 - (t.clientY / window.innerHeight);
+      const dx = (x - lastX) * 40.0;
+      const dy = (y - lastY) * 40.0;
+      lastX = x;
+      lastY = y;
+      fluid.splat(x, y, dx, dy, getThemeColor());
+    });
+
+    // UI Controls
+    const iterSlider = document.getElementById('iter-slider');
+    const iterVal = document.getElementById('iter-val');
+    iterSlider.addEventListener('input', (e) => {
+      const v = parseInt(e.target.value);
+      iterVal.textContent = v;
+      fluid.iterations = v;
+    });
+
+    const dissipSlider = document.getElementById('dissip-slider');
+    const dissipVal = document.getElementById('dissip-val');
+    dissipSlider.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      dissipVal.textContent = v.toFixed(3);
+      fluid.dissipation = v;
+    });
+
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTheme = btn.dataset.theme;
+      });
+    });
+
+    function triggerBurst() {
+      for (let i = 0; i < 8; i++) {
+        const x = 0.5 + (Math.random() - 0.5) * 0.2;
+        const y = 0.5 + (Math.random() - 0.5) * 0.2;
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 15.0 + Math.random() * 20.0;
+        fluid.splat(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, getThemeColor());
+      }
+    }
+
+    document.getElementById('btn-burst').addEventListener('click', triggerBurst);
+
+    // Initial swirling vortex ring on load
+    setTimeout(triggerBurst, 150);
+
+    // Main Simulation Loop
+    let lastTimestamp = performance.now();
+    let frameCount = 0;
+    let fpsTime = performance.now();
+    const fpsElem = document.getElementById('fps-counter');
+
+    function animate(t) {
+      requestAnimationFrame(animate);
+
+      const dt = Math.min((t - lastTimestamp) / 1000.0, 0.033);
+      lastTimestamp = t;
+
+      fluid.step(dt);
+      fluid.render();
+
+      frameCount++;
+      if (t - fpsTime >= 1000) {
+        fpsElem.textContent = `${frameCount} FPS`;
+        frameCount = 0;
+        fpsTime = t;
+      }
+    }
+
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
