@@ -1,0 +1,25 @@
+{
+  "name": "warlock-solver",
+  "version": "1.0.0",
+  "description": "Zero-dependency pure Node.js Eulerian fluid dynamics and Navier-Stokes solver",
+  "type": "module",
+  "main": "warlock-solver.js",
+  "scripts": {
+    "start": "node warlock-solver.js",
+    "test": "node warlock-solver.js"
+  },
+  "keywords": [
+    "fluid-dynamics",
+    "navier-stokes",
+    "eulerian-fluid",
+    "simulation",
+    "ascii",
+    "zero-dependencies"
+  ],
+  "author": "Vo Ba Hoang Minh <minhhoang250803@gmail.com> (https://github.com/anhminhzui-dev)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anhminhzui-dev/warlock-solver.git"
+  }
+}
